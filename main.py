@@ -2,9 +2,102 @@ import re
 import threading
 import time
 import tkinter as tk
+import json
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from urllib.parse import urlparse
+
+
+class ToastNotification:
+    def __init__(self, parent, message, toast_type="info", duration=3000):
+        self.parent = parent
+        self.message = message
+        self.toast_type = toast_type
+        self.duration = duration
+        self.alpha = 0.0
+        
+        self.toast = tk.Toplevel(parent)
+        self.toast.withdraw()
+        self.toast.overrideredirect(True)
+        self.toast.attributes("-topmost", True)
+        self.toast.attributes("-alpha", 0.0)
+        
+        # Get theme colors from parent if available
+        if hasattr(parent, 'palette'):
+            palette = parent.palette
+        else:
+            palette = {
+                "bg": "#ffffff",
+                "text": "#333333",
+                "success": "#28a745",
+                "warning": "#ffc107",
+                "danger": "#dc3545",
+                "accent": "#007bff"
+            }
+        
+        # Set colors based on toast type
+        bg_colors = {
+            "info": palette["accent"],
+            "success": palette["success"],
+            "warning": palette["warning"],
+            "error": palette["danger"]
+        }
+        
+        bg_color = bg_colors.get(toast_type, palette["accent"])
+        
+        self.toast.configure(bg=bg_color)
+        
+        # Create toast content
+        frame = tk.Frame(self.toast, bg=bg_color, padx=16, pady=12)
+        frame.pack()
+        
+        label = tk.Label(
+            frame,
+            text=message,
+            bg=bg_color,
+            fg="white",
+            font=("Segoe UI", 10),
+            wraplength=300
+        )
+        label.pack()
+        
+        # Position toast at top-right of parent
+        self.update_position()
+        self.toast.deiconify()
+        
+        # Animate in
+        self.fade_in()
+        
+        # Auto-close after duration
+        self.toast.after(duration - 500, self.fade_out)
+        self.toast.after(duration, self.close)
+    
+    def update_position(self):
+        self.toast.update_idletasks()
+        x = self.parent.winfo_rootx() + self.parent.winfo_width() - 320
+        y = self.parent.winfo_rooty() + 80
+        self.toast.geometry(f"+{x}+{y}")
+    
+    def fade_in(self):
+        """Fade in animation"""
+        if self.alpha < 0.9:
+            self.alpha += 0.1
+            self.toast.attributes("-alpha", self.alpha)
+            self.toast.after(30, self.fade_in)
+        else:
+            self.toast.attributes("-alpha", 0.9)
+    
+    def fade_out(self):
+        """Fade out animation"""
+        if self.alpha > 0.0:
+            self.alpha -= 0.1
+            self.toast.attributes("-alpha", self.alpha)
+            self.toast.after(30, self.fade_out)
+        else:
+            self.toast.attributes("-alpha", 0.0)
+    
+    def close(self):
+        self.toast.destroy()
 
 try:
     import pyautogui
@@ -34,24 +127,7 @@ class OverlayTyperApp:
         self.root.title("Overlay Typer Bot")
         self.root.geometry("1120x780+70+50")
         self.root.minsize(980, 700)
-        self.root.configure(bg="#f4f7fb")
         self.root.attributes("-topmost", True)
-
-        self.palette = {
-            "bg": "#f4f7fb",
-            "card": "#ffffff",
-            "card_alt": "#eef3fb",
-            "border": "#dce5f2",
-            "text": "#152033",
-            "muted": "#5d6b82",
-            "accent": "#1d6fdc",
-            "accent_hover": "#1559b2",
-            "accent_soft": "#dcebff",
-            "success": "#1f9d68",
-            "warning": "#d67b18",
-            "danger": "#c44c4c",
-            "surface": "#f9fbff",
-        }
 
         self.presets = {
             "LiveChat Typing Test": "https://www.livechat.com/typing-speed-test/#/",
@@ -61,6 +137,14 @@ class OverlayTyperApp:
             "Custom URL": "",
         }
 
+        self.dark_mode = tk.BooleanVar(value=False)
+        self.settings_file = Path(__file__).parent / "settings.json"
+        
+        self.load_settings()
+        self.setup_theme()
+        
+        self.root.configure(bg=self.palette["bg"])
+        
         self.stop_event = threading.Event()
         self.typing_thread = None
         self.scanning_thread = None
@@ -91,6 +175,112 @@ class OverlayTyperApp:
         self.bind_events()
         self.update_metrics()
         self.refresh_action_buttons()
+
+    def setup_theme(self):
+        if self.dark_mode.get():
+            self.palette = {
+                "bg": "#1a1a1a",
+                "card": "#2d2d2d",
+                "card_alt": "#3a3a3a",
+                "border": "#404040",
+                "text": "#ffffff",
+                "muted": "#b0b0b0",
+                "accent": "#4a9eff",
+                "accent_hover": "#3a8eef",
+                "accent_soft": "#1e3a5f",
+                "success": "#28a745",
+                "warning": "#ffc107",
+                "danger": "#dc3545",
+                "surface": "#2a2a2a",
+            }
+        else:
+            self.palette = {
+                "bg": "#f4f7fb",
+                "card": "#ffffff",
+                "card_alt": "#eef3fb",
+                "border": "#dce5f2",
+                "text": "#152033",
+                "muted": "#5d6b82",
+                "accent": "#1d6fdc",
+                "accent_hover": "#1559b2",
+                "accent_soft": "#dcebff",
+                "success": "#1f9d68",
+                "warning": "#d67b18",
+                "danger": "#c44c4c",
+                "surface": "#f9fbff",
+            }
+    
+    def load_settings(self):
+        try:
+            if self.settings_file.exists():
+                settings = json.loads(self.settings_file.read_text())
+                self.dark_mode.set(settings.get("dark_mode", False))
+                self.preset_var.set(settings.get("preset", "LiveChat Typing Test"))
+                self.duration_var.set(settings.get("duration", 1.0))
+                self.countdown_var.set(settings.get("countdown", 3))
+                self.enter_var.set(settings.get("press_enter", True))
+                self.topmost_var.set(settings.get("topmost", True))
+        except Exception:
+            pass
+    
+    def save_settings(self):
+        try:
+            settings = {
+                "dark_mode": self.dark_mode.get(),
+                "preset": self.preset_var.get(),
+                "duration": self.duration_var.get(),
+                "countdown": self.countdown_var.get(),
+                "press_enter": self.enter_var.get(),
+                "topmost": self.topmost_var.get(),
+            }
+            self.settings_file.write_text(json.dumps(settings, indent=2))
+        except Exception:
+            pass
+    
+    def toggle_theme(self):
+        self.setup_theme()
+        self.root.configure(bg=self.palette["bg"])
+        self.configure_styles()
+        self.apply_theme_to_widgets()
+        self.save_settings()
+    
+    def apply_theme_to_widgets(self):
+        if hasattr(self, 'text_widget'):
+            self.text_widget.configure(bg=self.palette["card"], fg=self.palette["text"], insertbackground=self.palette["accent"])
+        if hasattr(self, 'activity_text'):
+            self.activity_text.configure(bg=self.palette["card"], fg=self.palette["text"])
+        
+        for widget in self.root.winfo_children():
+            self.update_widget_theme(widget)
+    
+    def show_toast(self, message, toast_type="info", duration=3000):
+        """Show a toast notification"""
+        try:
+            ToastNotification(self.root, message, toast_type, duration)
+        except Exception:
+            # Fallback to activity log if toast fails
+            self.log_event(f"Toast ({toast_type}): {message}")
+    
+    def show_success_toast(self, message):
+        """Show success toast notification"""
+        self.show_toast(message, "success")
+    
+    def show_error_toast(self, message):
+        """Show error toast notification"""
+        self.show_toast(message, "error")
+    
+    def show_warning_toast(self, message):
+        """Show warning toast notification"""
+        self.show_toast(message, "warning")
+    
+    def update_widget_theme(self, widget):
+        try:
+            if isinstance(widget, ttk.Frame):
+                widget.configure(style="App.TFrame")
+            for child in widget.winfo_children():
+                self.update_widget_theme(child)
+        except:
+            pass
 
     def configure_styles(self):
         self.style.theme_use("clam")
@@ -129,10 +319,10 @@ class OverlayTyperApp:
         self.style.map("Ghost.TButton", background=[("active", "#eef4fc")])
         self.style.configure("Danger.TButton", font=("Segoe UI Semibold", 10), padding=(12, 9), background="#ffe8e8", foreground=self.palette["danger"], borderwidth=0)
         self.style.map("Danger.TButton", background=[("active", "#ffd5d5")])
-        self.style.configure("TEntry", fieldbackground="#ffffff", foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=7)
-        self.style.configure("TCombobox", fieldbackground="#ffffff", foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=6)
-        self.style.configure("TSpinbox", fieldbackground="#ffffff", foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=6)
-        self.style.configure("Modern.Horizontal.TProgressbar", troughcolor="#e7eef8", background=self.palette["accent"], bordercolor="#e7eef8", lightcolor=self.palette["accent"], darkcolor=self.palette["accent"])
+        self.style.configure("TEntry", fieldbackground=self.palette["card"], foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=7)
+        self.style.configure("TCombobox", fieldbackground=self.palette["card"], foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=6)
+        self.style.configure("TSpinbox", fieldbackground=self.palette["card"], foreground=self.palette["text"], bordercolor=self.palette["border"], lightcolor=self.palette["border"], darkcolor=self.palette["border"], padding=6)
+        self.style.configure("Modern.Horizontal.TProgressbar", troughcolor=self.palette["border"], background=self.palette["accent"], bordercolor=self.palette["border"], lightcolor=self.palette["accent"], darkcolor=self.palette["accent"])
 
     def create_widgets(self):
         container = ttk.Frame(self.root, style="App.TFrame", padding=22)
@@ -143,7 +333,14 @@ class OverlayTyperApp:
 
         title_block = ttk.Frame(header, style="App.TFrame")
         title_block.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_block, text="Overlay Typer Bot", style="Header.TLabel").pack(anchor="w")
+        
+        title_frame = ttk.Frame(title_block, style="App.TFrame")
+        title_frame.pack(anchor="w")
+        ttk.Label(title_frame, text="Overlay Typer Bot", style="Header.TLabel").pack(side="left", anchor="w")
+        
+        theme_button = ttk.Button(title_frame, text="🌙" if not self.dark_mode.get() else "☀️", command=self.toggle_theme, style="Ghost.TButton", width=3)
+        theme_button.pack(side="right", padx=(10, 0))
+        
         ttk.Label(
             title_block,
             text="A cleaner desktop workspace for manual typing, smart scraping, and live typing-test automation.",
@@ -208,7 +405,7 @@ class OverlayTyperApp:
             wrap="word",
             undo=True,
             font=("Consolas", 11),
-            bg="#fbfdff",
+            bg=self.palette["card"],
             fg=self.palette["text"],
             insertbackground=self.palette["accent"],
             relief="flat",
@@ -378,7 +575,7 @@ class OverlayTyperApp:
             height=6,
             wrap="word",
             font=("Consolas", 10),
-            bg="#fbfdff",
+            bg=self.palette["card"],
             fg=self.palette["text"],
             relief="flat",
             borderwidth=0,
@@ -399,8 +596,31 @@ class OverlayTyperApp:
         self.preset_combo.bind("<<ComboboxSelected>>", self.update_url_from_preset)
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
         self.duration_var.trace_add("write", lambda *_: self.update_metrics())
+        
+        # Keyboard shortcuts
         self.root.bind("<Control-v>", lambda event: self.paste_from_clipboard())
         self.root.bind("<Control-V>", lambda event: self.paste_from_clipboard())
+        self.root.bind("<Control-c>", lambda event: self.copy_text())
+        self.root.bind("<Control-C>", lambda event: self.copy_text())
+        self.root.bind("<Control-o>", lambda event: self.load_text_file())
+        self.root.bind("<Control-O>", lambda event: self.load_text_file())
+        self.root.bind("<Control-s>", lambda event: self.save_text_file())
+        self.root.bind("<Control-S>", lambda event: self.save_text_file())
+        self.root.bind("<Control-l>", lambda event: self.clear_text())
+        self.root.bind("<Control-L>", lambda event: self.clear_text())
+        self.root.bind("<Control-t>", lambda event: self.on_type())
+        self.root.bind("<Control-T>", lambda event: self.on_type())
+        self.root.bind("<Control-r>", lambda event: self.scrape_text_only())
+        self.root.bind("<Control-R>", lambda event: self.scrape_text_only())
+        self.root.bind("<Control-Shift-R>", lambda event: self.scrape_and_type())
+        self.root.bind("<Control-Shift-T>", lambda event: self.start_realtime_scanning())
+        self.root.bind("<Escape>", lambda event: self.stop_all())
+        self.root.bind("<F5>", lambda event: self.toggle_theme())
+        
+        # Focus shortcuts
+        self.root.bind("<Control-1>", lambda event: self.text_widget.focus_set())
+        self.root.bind("<Control-2>", lambda event: self.url_entry.focus_set())
+        self.root.bind("<Control-3>", lambda event: self.duration_spin.focus_set())
 
     def on_text_modified(self, _event=None):
         if self.text_widget.edit_modified():
@@ -486,16 +706,17 @@ class OverlayTyperApp:
         self.source_var.set("Manual input")
         self.update_metrics()
         self.set_status("Text workspace cleared.", badge="Idle", progress=0, log_message="Workspace cleared.")
+        self.show_success_toast("Text workspace cleared")
 
     def paste_from_clipboard(self):
         try:
             clipboard_text = self.root.clipboard_get()
         except tk.TclError:
-            messagebox.showwarning("Clipboard empty", "There is no text in the clipboard right now.")
+            self.show_warning_toast("Clipboard is empty")
             return
 
         if not clipboard_text.strip():
-            messagebox.showwarning("Clipboard empty", "There is no text in the clipboard right now.")
+            self.show_warning_toast("Clipboard is empty")
             return
 
         self.set_text(clipboard_text, source="Clipboard")
@@ -505,11 +726,12 @@ class OverlayTyperApp:
             progress=0,
             log_message="Loaded text from the clipboard.",
         )
+        self.show_success_toast("Text pasted from clipboard")
 
     def copy_text(self):
         text = self.get_text()
         if not text:
-            messagebox.showwarning("No text", "Add or scrape some text before copying.")
+            self.show_warning_toast("No text to copy")
             return
 
         self.root.clipboard_clear()
@@ -520,6 +742,7 @@ class OverlayTyperApp:
             progress=0,
             log_message="Copied the current text to the clipboard.",
         )
+        self.show_success_toast("Text copied to clipboard")
 
     def load_text_file(self):
         path = filedialog.askopenfilename(
@@ -534,7 +757,7 @@ class OverlayTyperApp:
         except UnicodeDecodeError:
             text = Path(path).read_text(encoding="utf-8", errors="ignore")
         except OSError as exc:
-            messagebox.showerror("Open failed", f"Could not read the file:\n{exc}")
+            self.show_error_toast(f"Could not read the file: {exc}")
             return
 
         self.set_text(text, source=f"File: {Path(path).name}")
@@ -544,11 +767,12 @@ class OverlayTyperApp:
             progress=0,
             log_message=f"Loaded file {Path(path).name}.",
         )
+        self.show_success_toast(f"Loaded {Path(path).name}")
 
     def save_text_file(self):
         text = self.get_text()
         if not text:
-            messagebox.showwarning("No text", "There is no text to save yet.")
+            self.show_warning_toast("No text to save")
             return
 
         path = filedialog.asksaveasfilename(
@@ -562,7 +786,7 @@ class OverlayTyperApp:
         try:
             Path(path).write_text(text, encoding="utf-8")
         except OSError as exc:
-            messagebox.showerror("Save failed", f"Could not save the file:\n{exc}")
+            self.show_error_toast(f"Could not save file: {exc}")
             return
 
         self.set_status(
@@ -571,6 +795,7 @@ class OverlayTyperApp:
             progress=0,
             log_message=f"Saved text to {Path(path).name}.",
         )
+        self.show_success_toast(f"Saved {Path(path).name}")
 
     def update_metrics(self):
         text = self.get_text()
