@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Typing Assistant</title>
+  <style>
+    :root {
+      --bg: #f5efe4;
+      --panel: #fff9f0;
+      --line: rgba(18, 32, 39, 0.12);
+      --text: #1c2830;
+      --muted: #5f6d74;
+      --accent: #1f8a70;
+      --warm: #c96c3b;
+      --danger: #b14837;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 360px;
+      background: linear-gradient(180deg, #fbf6ed 0%, #efe5d6 100%);
+      color: var(--text);
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      padding: 1rem;
+      display: grid;
+      gap: 0.9rem;
+    }
+
+    .hero,
+    .panel {
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 20px;
+      background: rgba(255, 249, 240, 0.95);
+      box-shadow: 0 16px 34px rgba(20, 36, 44, 0.12);
+    }
+
+    .hero {
+      padding: 1rem;
+      background: linear-gradient(135deg, rgba(24, 55, 67, 0.95), rgba(34, 85, 85, 0.92));
+      color: #fffaf2;
+    }
+
+    .eyebrow {
+      margin: 0 0 0.5rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      color: rgba(255, 250, 242, 0.72);
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.55rem;
+      line-height: 1;
+    }
+
+    .hero-copy {
+      margin-top: 0.7rem;
+      color: rgba(255, 250, 242, 0.82);
+      line-height: 1.5;
+      font-size: 0.93rem;
+    }
+
+    .panel {
+      padding: 0.95rem;
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.4rem 0.75rem;
+      background: rgba(31, 138, 112, 0.11);
+      color: var(--accent);
+      font-size: 0.82rem;
+    }
+
+    .pill.error {
+      background: rgba(177, 72, 55, 0.12);
+      color: var(--danger);
+    }
+
+    .pill.busy {
+      background: rgba(201, 108, 59, 0.12);
+      color: var(--warm);
+    }
+
+    input[type="number"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 0.75rem 0.9rem;
+      background: white;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    button {
+      flex: 1;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.8rem 1rem;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, var(--warm), #a94f23);
+      color: #fff9f2;
+    }
+
+    button.secondary {
+      background: rgba(24, 55, 67, 0.08);
+      color: var(--text);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .status-copy,
+    .mono,
+    .preview {
+      line-height: 1.5;
+      font-size: 0.9rem;
+    }
+
+    .mono {
+      color: var(--muted);
+      font-family: Consolas, "Courier New", monospace;
+      word-break: break-word;
+    }
+
+    .preview {
+      max-height: 92px;
+      overflow: auto;
+      border-radius: 14px;
+      padding: 0.8rem;
+      background: rgba(24, 55, 67, 0.05);
+      color: var(--text);
+    }
+
+    .footnote {
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <p class="eyebrow">All Supported Pages</p>
+      <h1>Typing Assistant</h1>
+      <p class="hero-copy">
+        Extracts visible typing text and types it into an editable field on the same page across normal web domains.
+      </p>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <span class="label">Current page</span>
+        <span id="domainPill" class="pill">Checking</span>
+      </div>
+      <div class="mono" id="pageHost">Loading active tab...</div>
+    </section>
+
+    <section class="panel">
+      <label class="label" for="wpmInput">Words per minute</label>
+      <input id="wpmInput" type="number" min="10" max="240" step="1" value="65">
+      <div class="button-row">
+        <button id="startButton" class="primary" type="button">Start</button>
+        <button id="stopButton" class="secondary" type="button">Stop</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <span class="label">Status</span>
+        <span id="statusPill" class="pill">Idle</span>
+      </div>
+      <div id="statusText" class="status-copy">Waiting for page state.</div>
+      <div class="mono" id="targetText"></div>
+      <div class="preview" id="previewText">No prompt extracted yet.</div>
+    </section>
+
+    <section class="panel">
+      <div class="footnote">
+        This build injects on normal <span class="mono">http</span> and <span class="mono">https</span> pages and will retry injection automatically if the tab missed the initial load.
+      </div>
+    </section>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

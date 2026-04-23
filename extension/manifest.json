@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Owned Page Typing Assistant",
+  "version": "1.0.0",
+  "description": "Extract visible typing prompts and type them into editable fields on allowed domains you control.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Owned Page Typing Assistant",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "scraper.js",
+        "typer.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
