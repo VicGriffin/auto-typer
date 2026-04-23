@@ -2,6 +2,7 @@
   const elements = {
     domainPill: document.querySelector("#domainPill"),
     pageHost: document.querySelector("#pageHost"),
+    customTextInput: document.querySelector("#customTextInput"),
     wpmInput: document.querySelector("#wpmInput"),
     startButton: document.querySelector("#startButton"),
     stopButton: document.querySelector("#stopButton"),
@@ -156,17 +157,30 @@
     }
   }
 
-  function getStoredWpm() {
+  function normalizeCustomText(text) {
+    return String(text || "")
+      .replace(/\r/g, "")
+      .trim();
+  }
+
+  function getCustomText() {
+    return normalizeCustomText(elements.customTextInput.value);
+  }
+
+  function getStoredSettings() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(["wpm"], (items) => {
+      chrome.storage.local.get(["wpm", "customText"], (items) => {
         const value = Number(items.wpm);
-        resolve(Number.isFinite(value) ? value : 65);
+        resolve({
+          wpm: Number.isFinite(value) ? value : 65,
+          customText: normalizeCustomText(items.customText)
+        });
       });
     });
   }
 
-  function setStoredWpm(wpm) {
-    chrome.storage.local.set({ wpm });
+  function setStoredSettings(nextSettings) {
+    chrome.storage.local.set(nextSettings);
   }
 
   function renderState(tab, state) {
@@ -211,7 +225,10 @@
       }
 
       activeTabId = tab.id;
-      const result = await ensureConnection({ action: "GET_STATE" });
+      const result = await ensureConnection({
+        action: "GET_STATE",
+        customText: getCustomText()
+      });
       renderState(result.tab, result.response);
     } catch (error) {
       lastTransportError = error.message || String(error);
@@ -223,7 +240,10 @@
   async function startTyping() {
     const wpm = Math.min(Math.max(Number(elements.wpmInput.value) || 65, 10), 240);
     elements.wpmInput.value = String(wpm);
-    setStoredWpm(wpm);
+    setStoredSettings({
+      wpm,
+      customText: getCustomText()
+    });
 
     try {
       const handshake = await ensureConnection({ action: "START" });
@@ -231,7 +251,8 @@
 
       const result = await ensureConnection({
         action: "START_TYPING",
-        wpm
+        wpm,
+        customText: getCustomText()
       });
 
       renderState(result.tab, result.response);
@@ -257,13 +278,24 @@
   }
 
   async function init() {
-    const storedWpm = await getStoredWpm();
-    elements.wpmInput.value = String(storedWpm);
+    const storedSettings = await getStoredSettings();
+    elements.wpmInput.value = String(storedSettings.wpm);
+    elements.customTextInput.value = storedSettings.customText;
 
     elements.wpmInput.addEventListener("change", () => {
       const wpm = Math.min(Math.max(Number(elements.wpmInput.value) || 65, 10), 240);
       elements.wpmInput.value = String(wpm);
-      setStoredWpm(wpm);
+      setStoredSettings({ wpm });
+    });
+
+    elements.customTextInput.addEventListener("input", () => {
+      const customText = getCustomText();
+      if (elements.customTextInput.value !== customText) {
+        elements.customTextInput.value = customText;
+      }
+
+      setStoredSettings({ customText });
+      refreshState().catch(() => {});
     });
 
     elements.startButton.addEventListener("click", startTyping);

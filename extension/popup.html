@@ -108,7 +108,8 @@
       color: var(--warm);
     }
 
-    input[type="number"] {
+    input[type="number"],
+    textarea {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -116,6 +117,11 @@
       background: white;
       color: var(--text);
       font: inherit;
+    }
+
+    textarea {
+      min-height: 118px;
+      resize: vertical;
     }
 
     .button-row {
@@ -192,6 +198,17 @@
         <span id="domainPill" class="pill">Checking</span>
       </div>
       <div class="mono" id="pageHost">Loading active tab...</div>
+    </section>
+
+    <section class="panel">
+      <label class="label" for="customTextInput">Paste Text To Type</label>
+      <textarea
+        id="customTextInput"
+        placeholder="Paste custom text here. Leave this blank to use the prompt detected on the page."
+      ></textarea>
+      <div class="footnote">
+        Pasted text takes priority over page scraping while this field has content.
+      </div>
     </section>
 
     <section class="panel">

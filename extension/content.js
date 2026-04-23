@@ -161,9 +161,34 @@
     return extraction;
   }
 
-  function updateReadyState() {
+  function getRequestedText(rawText) {
+    return window.OwnedTypingScraper.normalizeText(rawText || "");
+  }
+
+  function updateReadyState(request = {}) {
+    const requestedText = getRequestedText(request.customText);
+    const target = findEditableTarget(null, document.activeElement);
+
+    if (requestedText) {
+      state.extractedText = requestedText;
+      state.strategy = "manual";
+
+      if (!target) {
+        state.status = "error";
+        state.message = "No editable input field was detected on this page.";
+        state.targetLabel = "";
+        return getPublicState();
+      }
+
+      state.status = "ready";
+      state.message = `Ready to type ${requestedText.length} pasted characters.`;
+      state.targetLabel = describeElement(target.element);
+      state.lastError = "";
+      return getPublicState();
+    }
+
     const extraction = refreshExtraction();
-    const target = findEditableTarget(extraction.root || null, document.activeElement);
+    const promptTarget = target || findEditableTarget(extraction.root || null, document.activeElement);
 
     if (!extraction.text) {
       state.status = "error";
@@ -172,7 +197,7 @@
       return getPublicState();
     }
 
-    if (!target) {
+    if (!promptTarget) {
       state.status = "error";
       state.message = "No editable input field was detected on this page.";
       state.targetLabel = "";
@@ -181,7 +206,7 @@
 
     state.status = "ready";
     state.message = `Ready to type ${extraction.text.length} characters using ${extraction.strategy}.`;
-    state.targetLabel = describeElement(target.element);
+    state.targetLabel = describeElement(promptTarget.element);
     state.lastError = "";
 
     return getPublicState();
@@ -237,19 +262,27 @@
     }
 
     const requestedWpm = Math.min(Math.max(Number(request.wpm) || 65, 10), 240);
+    const requestedText = getRequestedText(request.customText);
     state.wpm = requestedWpm;
 
-    const extraction = refreshExtraction();
-    if (!extraction.text) {
-      state.status = "error";
-      state.message = "No visible typing prompt was found on this page.";
-      return getPublicState();
-    }
+    const extraction = requestedText
+      ? {
+          text: requestedText,
+          root: null,
+          strategy: "manual"
+        }
+      : refreshExtraction();
 
     const target = findEditableTarget(extraction.root || null, document.activeElement);
     if (!target) {
       state.status = "error";
       state.message = "No editable input field was detected on this page.";
+      return getPublicState();
+    }
+
+    if (!extraction.text) {
+      state.status = "error";
+      state.message = "No visible typing prompt was found on this page.";
       return getPublicState();
     }
 
@@ -303,7 +336,7 @@
       if (typer.getState().running) {
         sendResponse(getPublicState());
       } else {
-        sendResponse(updateReadyState());
+        sendResponse(updateReadyState(message || {}));
       }
       return;
     }
