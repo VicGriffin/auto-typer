@@ -55,6 +55,22 @@ A modern, feature-rich desktop automation application for typing text with reali
    python main.py
    ```
 
+5. **Run the Web Version**
+   ```powershell
+   .\start_web.ps1
+   ```
+   Then open `http://127.0.0.1:5000` in your browser.
+
+## Web Access
+
+The project now also includes a browser interface in `web_app.py`.
+
+- Run `python web_app.py`, then open `http://127.0.0.1:5000`.
+- If the `python` launcher is unavailable on your machine, run `.\start_web.ps1` from PowerShell and it will locate a working local Python install automatically.
+- Use the website to paste text, scrape supported typing pages, view metrics, and run timed typing playback inside the browser.
+- The original Tkinter desktop app in `main.py` is still available for desktop-wide automation with `pyautogui`.
+- The scrape endpoint only accepts public `http` and `https` URLs and blocks local or private hosts.
+
 ## 📖 Usage Guide
 
 ### Basic Typing

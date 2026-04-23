@@ -522,11 +522,14 @@ class OverlayTyperApp:
         self.type_button = ttk.Button(card, text="Start Typing", command=self.on_type, style="Accent.TButton")
         self.type_button.grid(row=3, column=0, sticky="ew", padx=(0, 6))
 
+        self.just_type_button = ttk.Button(card, text="Just Type", command=self.on_type, style="Secondary.TButton")
+        self.just_type_button.grid(row=3, column=1, sticky="ew", padx=(6, 0))
+
         self.live_scan_button = ttk.Button(card, text="Start Live Scan", command=self.start_realtime_scanning, style="Secondary.TButton")
-        self.live_scan_button.grid(row=3, column=1, sticky="ew", padx=(6, 0))
+        self.live_scan_button.grid(row=4, column=0, sticky="ew", padx=(0, 6), pady=(8, 0))
 
         self.stop_button = ttk.Button(card, text="Stop", command=self.stop_all, style="Danger.TButton")
-        self.stop_button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self.stop_button.grid(row=4, column=1, sticky="ew", padx=(6, 0), pady=(8, 0))
         return card
 
     def build_status_card(self):
