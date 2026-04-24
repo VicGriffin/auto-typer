@@ -1,24 +1,11 @@
 (() => {
-  const WORD_SELECTORS = [
-    ".word",
-    "[data-word]",
-    ".typing-word",
-    "[data-testid*='word']"
-  ];
-
-  const LETTER_SELECTORS = [
-    ".letter",
-    ".char",
-    "[data-letter]",
-    "[data-char]",
-    "[data-testid*='letter']"
-  ];
-
-  const PROMPT_CONTAINER_SELECTORS = [
+  const WORD_SELECTOR = ".word, [data-word], .typing-word, [data-testid*='word']";
+  const LETTER_SELECTOR = ".letter, .char, [data-letter], [data-char], [data-testid*='letter']";
+  const TEXT_BLOCK_SELECTOR = [
+    ".text-block",
     "[data-typing-text]",
     "[data-typing-prompt]",
     "[data-prompt]",
-    ".text-block",
     ".text-to-type",
     ".typing-text",
     ".typing-prompt",
@@ -27,14 +14,9 @@
     ".sentence",
     ".paragraph",
     ".passage",
-    "[class*='prompt']",
-    "[class*='passage']",
-    "[class*='quote']",
-    "[class*='typing']",
-    "[class*='text']",
     "blockquote",
     "p"
-  ];
+  ].join(", ");
 
   const EXCLUDED_SELECTOR = [
     "script",
@@ -65,7 +47,7 @@
     "[role='tab']"
   ].join(", ");
 
-  const UI_TEXT_PATTERNS = [
+  const UI_BLACKLIST = [
     /typing assistant/i,
     /words per minute/i,
     /^start$/i,
@@ -76,29 +58,11 @@
   ];
 
   function normalizeText(text) {
-    if (!text) {
-      return "";
-    }
-
-    const normalizedLines = String(text)
+    return String(text || "")
       .replace(/\u00a0/g, " ")
       .replace(/\r/g, "")
-      .split("\n")
-      .map((line) => line.replace(/\s+/g, " ").trim());
-
-    const compact = [];
-    for (const line of normalizedLines) {
-      if (!line) {
-        if (compact.length && compact[compact.length - 1] !== "") {
-          compact.push("");
-        }
-        continue;
-      }
-
-      compact.push(line);
-    }
-
-    return compact.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function isElementVisible(element) {
@@ -128,36 +92,13 @@
     return rect.width > 0 && rect.height > 0;
   }
 
-  function getElementDistanceScore(element, targetElement) {
-    if (!targetElement || !(targetElement instanceof Element)) {
-      return 0;
-    }
-
-    const a = element.getBoundingClientRect();
-    const b = targetElement.getBoundingClientRect();
-    const ax = a.left + (a.width / 2);
-    const ay = a.top + (a.height / 2);
-    const bx = b.left + (b.width / 2);
-    const by = b.top + (b.height / 2);
-    const distance = Math.hypot(ax - bx, ay - by);
-    return Math.max(0, 2600 - distance) / 10;
-  }
-
-  function getNormalizedElementText(element) {
-    if (!(element instanceof Element) || !isElementVisible(element)) {
-      return "";
-    }
-
-    return normalizeText(element.innerText || element.textContent || "");
-  }
-
-  function isUiText(text) {
-    const compact = normalizeText(text);
-    if (!compact) {
+  function isUiNoise(text) {
+    const normalized = normalizeText(text);
+    if (!normalized) {
       return true;
     }
 
-    return UI_TEXT_PATTERNS.some((pattern) => pattern.test(compact));
+    return UI_BLACKLIST.some((pattern) => pattern.test(normalized));
   }
 
   function isExcludedElement(element) {
@@ -169,245 +110,182 @@
       return true;
     }
 
-    if (element.closest(EXCLUDED_SELECTOR)) {
+    if (element.matches(EXCLUDED_SELECTOR) || element.closest(EXCLUDED_SELECTOR)) {
       return true;
     }
 
-    const classAndId = `${element.className || ""} ${element.id || ""}`;
-    if (/(header|nav|menu|toolbar|footer|sidebar|control|button|banner|promo|advert)/i.test(classAndId)) {
-      return true;
-    }
-
-    return false;
+    const descriptor = `${element.className || ""} ${element.id || ""}`;
+    return /(header|nav|menu|toolbar|footer|sidebar|control|button|banner|promo|advert)/i.test(descriptor);
   }
 
-  function sanitizePromptText(text) {
-    const compact = normalizeText(text);
-    if (!compact) {
+  function getVisibleMatches(selector, root = document) {
+    return Array.from(root.querySelectorAll(selector)).filter((element) => (
+      element instanceof Element &&
+      isElementVisible(element) &&
+      !isExcludedElement(element)
+    ));
+  }
+
+  function getElementDistance(left, right) {
+    if (!(left instanceof Element) || !(right instanceof Element)) {
+      return Infinity;
+    }
+
+    const leftRect = left.getBoundingClientRect();
+    const rightRect = right.getBoundingClientRect();
+    const leftX = leftRect.left + (leftRect.width / 2);
+    const leftY = leftRect.top + (leftRect.height / 2);
+    const rightX = rightRect.left + (rightRect.width / 2);
+    const rightY = rightRect.top + (rightRect.height / 2);
+    return Math.hypot(leftX - rightX, leftY - rightY);
+  }
+
+  function getPromptAnchor(anchorElement = null) {
+    if (anchorElement instanceof Element && isElementVisible(anchorElement)) {
+      return anchorElement;
+    }
+
+    const directTypingInput = document.querySelector("#zz-mob-inp");
+    if (directTypingInput instanceof Element && isElementVisible(directTypingInput)) {
+      return directTypingInput;
+    }
+
+    const active = document.activeElement;
+    if (active instanceof Element && isElementVisible(active)) {
+      return active;
+    }
+
+    const fallback = document.querySelector(
+      "input:not([type='hidden']), textarea, [contenteditable='true'], [contenteditable='plaintext-only']"
+    );
+    return fallback instanceof Element && isElementVisible(fallback) ? fallback : null;
+  }
+
+  function findNearestMatch(selector, anchorElement = null) {
+    const matches = getVisibleMatches(selector);
+    if (!matches.length) {
+      return null;
+    }
+
+    const anchor = getPromptAnchor(anchorElement);
+    if (!(anchor instanceof Element)) {
+      return matches[0] || null;
+    }
+
+    return matches
+      .slice()
+      .sort((left, right) => getElementDistance(left, anchor) - getElementDistance(right, anchor))[0] || null;
+  }
+
+  function findClusterContainer(startElement, selector, minimumCount) {
+    if (!(startElement instanceof Element)) {
+      return null;
+    }
+
+    let current = startElement.parentElement;
+    let fallback = startElement.parentElement;
+
+    while (current && current !== document.documentElement) {
+      if (isElementVisible(current) && !isExcludedElement(current)) {
+        fallback = current;
+        if (current.querySelectorAll(selector).length >= minimumCount) {
+          return current;
+        }
+      }
+
+      current = current.parentElement;
+    }
+
+    return fallback;
+  }
+
+  function findTextBlockContainer(anchorElement = null) {
+    const anchor = getPromptAnchor(anchorElement);
+    const candidates = getVisibleMatches(TEXT_BLOCK_SELECTOR)
+      .filter((element) => {
+        const text = normalizeText(element.textContent || "");
+        return text.length >= 12 && !isUiNoise(text);
+      })
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const anchorRect = anchor instanceof Element ? anchor.getBoundingClientRect() : null;
+        let score = normalizeText(element.textContent || "").length;
+
+        if (anchorRect) {
+          const verticalGap = anchorRect.top - rect.bottom;
+          if (verticalGap >= -20 && verticalGap <= 320) {
+            score += 1000 - Math.abs(verticalGap);
+          } else if (rect.top <= anchorRect.bottom && rect.bottom >= anchorRect.top) {
+            score += 400;
+          } else {
+            score -= Math.abs(verticalGap);
+          }
+
+          score -= getElementDistance(element, anchor) / 10;
+        }
+
+        return { element, score };
+      })
+      .sort((left, right) => right.score - left.score);
+
+    return candidates[0] ? candidates[0].element : null;
+  }
+
+  function detectPageType(anchorElement = null) {
+    if (findNearestMatch(WORD_SELECTOR, anchorElement)) {
+      return "word";
+    }
+
+    if (findNearestMatch(LETTER_SELECTOR, anchorElement)) {
+      return "letter";
+    }
+
+    if (findTextBlockContainer(anchorElement)) {
+      return "text-block";
+    }
+
+    return null;
+  }
+
+  function locatePromptContainer(pageType, anchorElement = null) {
+    if (pageType === "word") {
+      const word = findNearestMatch(WORD_SELECTOR, anchorElement);
+      return findClusterContainer(word, WORD_SELECTOR, 2);
+    }
+
+    if (pageType === "letter") {
+      const letter = findNearestMatch(LETTER_SELECTOR, anchorElement);
+      return findClusterContainer(letter, LETTER_SELECTOR, 6);
+    }
+
+    if (pageType === "text-block") {
+      return findTextBlockContainer(anchorElement);
+    }
+
+    return null;
+  }
+
+  function extractWordText(container) {
+    const words = getVisibleMatches(WORD_SELECTOR, container)
+      .map((element) => normalizeText(element.textContent || ""))
+      .filter((text) => text && !isUiNoise(text));
+
+    return normalizeText(words.join(" "));
+  }
+
+  function extractLetterText(container) {
+    const letters = getVisibleMatches(LETTER_SELECTOR, container)
+      .map((element) => element.textContent || "")
+      .join("");
+
+    return normalizeText(letters);
+  }
+
+  function extractTextBlock(container) {
+    if (!(container instanceof Element)) {
       return "";
     }
 
-    const filteredLines = compact
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => !isUiText(line));
-
-    const deduped = [];
-    for (const line of filteredLines) {
-      if (deduped[deduped.length - 1] !== line) {
-        deduped.push(line);
-      }
-    }
-
-    return normalizeText(deduped.join(" "))
-      .replace(/\s+([,.;!?])/g, "$1")
-      .trim();
-  }
-
-  function getContainerHintScore(element) {
-    if (!(element instanceof Element)) {
-      return 0;
-    }
-
-    const descriptor = `${element.className || ""} ${element.id || ""} ${element.tagName || ""}`;
-    let score = 0;
-
-    if (/(prompt|passage|quote|typing|text)/i.test(descriptor)) {
-      score += 120;
-    }
-
-    if (element.matches(".text-block, .typing-text, .typing-prompt, [data-typing-text], [data-typing-prompt], [data-prompt]")) {
-      score += 220;
-    }
-
-    if (element.querySelector(WORD_SELECTORS.join(","))) {
-      score += 260;
-    }
-
-    if (element.querySelector(LETTER_SELECTORS.join(","))) {
-      score += 170;
-    }
-
-    return score;
-  }
-
-  function scoreText(text, container, strategy, targetElement) {
-    if (!text) {
-      return -Infinity;
-    }
-
-    const words = text.split(/\s+/).filter(Boolean);
-    if (text.length < 12 || words.length < 2) {
-      return -Infinity;
-    }
-
-    const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
-    const alphaRatio = alphaCount / Math.max(text.length, 1);
-    const strategyScore =
-      strategy === "word-layout" ? 320 :
-      strategy === "letter-layout" ? 250 :
-      strategy === "structured-block" ? 210 :
-      150;
-
-    return (
-      strategyScore +
-      getContainerHintScore(container) +
-      getElementDistanceScore(container, targetElement) +
-      Math.min(words.length * 5, 160) +
-      Math.min(text.length, 420) * 0.25 +
-      (alphaRatio * 80)
-    );
-  }
-
-  function addCandidate(candidates, seen, element) {
-    if (!(element instanceof Element)) {
-      return;
-    }
-
-    if (seen.has(element)) {
-      return;
-    }
-
-    if (element === document.body) {
-      return;
-    }
-
-    if (!isElementVisible(element) || isExcludedElement(element)) {
-      return;
-    }
-
-    const text = getNormalizedElementText(element);
-    if (!text || isUiText(text)) {
-      return;
-    }
-
-    seen.add(element);
-    candidates.push(element);
-  }
-
-  function addNearbyPromptCandidates(anchor, candidates, seen) {
-    if (!(anchor instanceof Element)) {
-      return;
-    }
-
-    let current = anchor;
-    for (let depth = 0; current && current !== document.body && depth < 6; depth += 1) {
-      const parent = current.parentElement;
-      if (!parent) {
-        break;
-      }
-
-      addCandidate(candidates, seen, parent.closest(PROMPT_CONTAINER_SELECTORS.join(",")));
-
-      for (const sibling of Array.from(parent.children)) {
-        if (sibling === current) {
-          continue;
-        }
-
-        if (sibling.matches(PROMPT_CONTAINER_SELECTORS.join(","))) {
-          addCandidate(candidates, seen, sibling);
-        }
-
-        for (const nested of sibling.querySelectorAll(PROMPT_CONTAINER_SELECTORS.join(","))) {
-          addCandidate(candidates, seen, nested);
-        }
-      }
-
-      current = parent;
-    }
-  }
-
-  function findPromptContainers(targetElement) {
-    const candidates = [];
-    const seen = new Set();
-    const input = document.querySelector("#zz-mob-inp");
-    const anchor = (targetElement instanceof Element && isElementVisible(targetElement))
-      ? targetElement
-      : (input instanceof Element ? input : null);
-
-    if (anchor) {
-      addNearbyPromptCandidates(anchor, candidates, seen);
-    }
-
-    for (const selector of PROMPT_CONTAINER_SELECTORS) {
-      for (const element of document.querySelectorAll(selector)) {
-        addCandidate(candidates, seen, element);
-      }
-    }
-
-    if (!candidates.length && document.body) {
-      candidates.push(document.body);
-    }
-
-    return candidates;
-  }
-
-  function extractFromWordNodes(container) {
-    const nodes = Array.from(container.querySelectorAll(WORD_SELECTORS.join(",")))
-      .filter((element) => !isExcludedElement(element))
-      .map((element) => sanitizePromptText(getNormalizedElementText(element)))
-      .filter(Boolean);
-
-    if (!nodes.length) {
-      return null;
-    }
-
-    return sanitizePromptText(nodes.join(" "));
-  }
-
-  function extractFromLetterNodes(container) {
-    const nodes = Array.from(container.querySelectorAll(LETTER_SELECTORS.join(",")))
-      .filter((element) => !isExcludedElement(element));
-
-    if (nodes.length < 8) {
-      return null;
-    }
-
-    const text = sanitizePromptText(
-      nodes
-        .map((element) => getNormalizedElementText(element))
-        .filter(Boolean)
-        .join("")
-    );
-
-    return text || null;
-  }
-
-  function extractFromStructuredNodes(container) {
-    const nodes = Array.from(container.querySelectorAll("p, span, blockquote"))
-      .filter((element) => !isExcludedElement(element))
-      .filter((element) => {
-        const text = sanitizePromptText(getNormalizedElementText(element));
-        if (!text) {
-          return false;
-        }
-
-        const parentStructured = element.parentElement && element.parentElement.closest("p, span, blockquote");
-        return !parentStructured || parentStructured === container || !container.contains(parentStructured);
-      });
-
-    if (!nodes.length) {
-      return null;
-    }
-
-    const textSegments = nodes
-      .map((element) => sanitizePromptText(getNormalizedElementText(element)))
-      .filter(Boolean);
-
-    if (!textSegments.length) {
-      return null;
-    }
-
-    const averageLength = textSegments.join("").length / textSegments.length;
-    if (nodes.length > 40 && averageLength < 2.5) {
-      return null;
-    }
-
-    return sanitizePromptText(textSegments.join(" "));
-  }
-
-  function extractWithTreeWalker(container) {
     const parts = [];
     const walker = document.createTreeWalker(
       container,
@@ -423,8 +301,8 @@
             return NodeFilter.FILTER_REJECT;
           }
 
-          const text = sanitizePromptText(node.textContent || "");
-          if (!text) {
+          const text = normalizeText(node.textContent || "");
+          if (!text || isUiNoise(text)) {
             return NodeFilter.FILTER_REJECT;
           }
 
@@ -435,90 +313,43 @@
 
     let current = walker.nextNode();
     while (current) {
-      const text = sanitizePromptText(current.textContent || "");
-      if (text) {
+      const text = normalizeText(current.textContent || "");
+      if (text && !isUiNoise(text)) {
         parts.push(text);
       }
       current = walker.nextNode();
     }
 
-    return sanitizePromptText(parts.join(" "));
+    return normalizeText(parts.join(" "));
   }
 
-  function extractFromContainer(container, targetElement) {
+  function extractStructuredText(pageType, container) {
     if (!(container instanceof Element)) {
-      return null;
+      return "";
     }
 
-    const strategies = [
-      {
-        name: "word-layout",
-        run: () => extractFromWordNodes(container)
-      },
-      {
-        name: "letter-layout",
-        run: () => extractFromLetterNodes(container)
-      },
-      {
-        name: "structured-block",
-        run: () => extractFromStructuredNodes(container)
-      },
-      {
-        name: "container-treewalker",
-        run: () => extractWithTreeWalker(container)
-      }
-    ];
-
-    for (const strategy of strategies) {
-      const text = strategy.run();
-      if (!text) {
-        continue;
-      }
-
-      const score = scoreText(text, container, strategy.name, targetElement);
-      if (!Number.isFinite(score)) {
-        continue;
-      }
-
-      return {
-        text,
-        root: container,
-        strategy: strategy.name,
-        score
-      };
+    if (pageType === "word") {
+      return extractWordText(container);
     }
 
-    return null;
-  }
-
-  function extractVisiblePrompt(options = {}) {
-    const requestedTarget = options.targetElement instanceof Element ? options.targetElement : null;
-    const targetElement = requestedTarget || document.querySelector("#zz-mob-inp") || null;
-    const containers = findPromptContainers(targetElement);
-    const candidates = containers
-      .map((container) => extractFromContainer(container, targetElement))
-      .filter(Boolean)
-      .sort((left, right) => right.score - left.score);
-
-    if (!candidates.length) {
-      console.log("SCRAPER INPUT:", null);
-      console.log("SCRAPER OUTPUT:", "");
-      return {
-        text: "",
-        root: null,
-        strategy: "none",
-        score: 0
-      };
+    if (pageType === "letter") {
+      return extractLetterText(container);
     }
 
-    const best = candidates[0];
-    console.log("SCRAPER INPUT:", best.root);
-    console.log("SCRAPER OUTPUT:", best.text);
-    return best;
+    if (pageType === "text-block") {
+      return extractTextBlock(container);
+    }
+
+    return "";
   }
 
   window.OwnedTypingScraper = {
-    extractVisiblePrompt,
+    WORD_SELECTOR,
+    LETTER_SELECTOR,
+    TEXT_BLOCK_SELECTOR,
+    detectPageType,
+    locatePromptContainer,
+    extractStructuredText,
     normalizeText,
     isElementVisible
   };

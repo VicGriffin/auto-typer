@@ -1,9 +1,12 @@
 (() => {
   console.log("CONTENT SCRIPT LOADED", window.location.href);
 
-  const EDITABLE_SELECTOR = [
-    "textarea:not([disabled]):not([readonly])",
+  const EDITABLE_INPUT_SELECTOR = [
     "input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='button']):not([type='submit']):not([disabled]):not([readonly])",
+    "textarea:not([disabled]):not([readonly])"
+  ].join(", ");
+
+  const CONTENTEDITABLE_SELECTOR = [
     "[contenteditable='true']",
     "[contenteditable='plaintext-only']",
     "[role='textbox']"
@@ -22,6 +25,13 @@
     lastError: ""
   };
 
+  let pendingContextPromise = null;
+  let pendingContextKey = "";
+
+  function sleep(milliseconds) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+
   function isVisible(element) {
     return window.OwnedTypingScraper.isElementVisible(element);
   }
@@ -31,7 +41,11 @@
       return false;
     }
 
-    if (!element.matches(EDITABLE_SELECTOR)) {
+    if (!isVisible(element)) {
+      return false;
+    }
+
+    if (!element.matches(`${EDITABLE_INPUT_SELECTOR}, ${CONTENTEDITABLE_SELECTOR}`)) {
       return false;
     }
 
@@ -46,34 +60,10 @@
     return true;
   }
 
-  function getFocusabilityScore(element) {
-    if (isVisible(element)) {
-      return 240;
+  function focusEditable(element) {
+    if (element && typeof element.focus === "function") {
+      element.focus({ preventScroll: false });
     }
-
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      return 110;
-    }
-
-    if (element.isContentEditable) {
-      return 80;
-    }
-
-    return -120;
-  }
-
-  function getElementCenterDistance(a, b) {
-    if (!a || !b) {
-      return 0;
-    }
-
-    const left = a.getBoundingClientRect();
-    const right = b.getBoundingClientRect();
-    const leftX = left.left + (left.width / 2);
-    const leftY = left.top + (left.height / 2);
-    const rightX = right.left + (right.width / 2);
-    const rightY = right.top + (right.height / 2);
-    return Math.hypot(leftX - rightX, leftY - rightY);
   }
 
   function describeElement(element) {
@@ -86,8 +76,8 @@
       bits.push(`#${element.id}`);
     }
 
-    if (element.name) {
-      bits.push(`[name="${element.name}"]`);
+    if (element.getAttribute("name")) {
+      bits.push(`[name="${element.getAttribute("name")}"]`);
     }
 
     if (element.matches("[contenteditable='true'], [contenteditable='plaintext-only']")) {
@@ -97,119 +87,237 @@
     return bits.join("");
   }
 
-  function scoreEditable(element, promptRoot) {
-    let score = getFocusabilityScore(element);
-
-    if (element === document.activeElement) {
-      score += 320;
+  function getElementCenterDistance(left, right) {
+    if (!(left instanceof Element) || !(right instanceof Element)) {
+      return Infinity;
     }
 
-    if (promptRoot) {
-      const distance = getElementCenterDistance(element, promptRoot);
-      score += Math.max(0, 2400 - distance) / 10;
-
-      const elementForm = element.closest("form");
-      const promptForm = promptRoot.closest("form");
-      if (elementForm && promptForm && elementForm === promptForm) {
-        score += 180;
-      }
-    }
-
-    if (element instanceof HTMLTextAreaElement) {
-      score += 120;
-    } else if (element instanceof HTMLInputElement) {
-      score += 110;
-    } else if (element.isContentEditable) {
-      score += 100;
-    }
-
-    return score;
-  }
-
-  function findEditableTarget(promptRoot = null, preferred = null) {
-    const candidates = Array.from(document.querySelectorAll(EDITABLE_SELECTOR))
-      .filter(isEditableCandidate);
-
-    if (preferred && isEditableCandidate(preferred)) {
-      candidates.unshift(preferred);
-    }
-
-    if (!candidates.length) {
-      return null;
-    }
-
-    const uniqueCandidates = Array.from(new Set(candidates));
-    const scored = uniqueCandidates
-      .map((element) => ({
-        element,
-        score: scoreEditable(element, promptRoot)
-      }))
-      .sort((left, right) => right.score - left.score);
-
-    return scored[0] || null;
-  }
-
-  function refreshExtraction() {
-    const preferredTarget = isEditableCandidate(document.activeElement) ? document.activeElement : null;
-    const extraction = window.OwnedTypingScraper.extractVisiblePrompt({
-      targetElement: preferredTarget
-    });
-
-    state.extractedText = extraction.text || "";
-    state.strategy = extraction.strategy || "none";
-
-    return extraction;
+    const leftRect = left.getBoundingClientRect();
+    const rightRect = right.getBoundingClientRect();
+    const leftX = leftRect.left + (leftRect.width / 2);
+    const leftY = leftRect.top + (leftRect.height / 2);
+    const rightX = rightRect.left + (rightRect.width / 2);
+    const rightY = rightRect.top + (rightRect.height / 2);
+    return Math.hypot(leftX - rightX, leftY - rightY);
   }
 
   function getRequestedText(rawText) {
     return window.OwnedTypingScraper.normalizeText(rawText || "");
   }
 
-  function updateReadyState(request = {}) {
-    const requestedText = getRequestedText(request.customText);
-    const target = findEditableTarget(null, document.activeElement);
+  function getPromptAnchorElement() {
+    const directTypingInput = document.querySelector("#zz-mob-inp");
+    if (directTypingInput instanceof Element && isVisible(directTypingInput)) {
+      return directTypingInput;
+    }
 
-    if (requestedText) {
-      state.extractedText = requestedText;
-      state.strategy = "manual";
+    const active = document.activeElement;
+    if (isEditableCandidate(active)) {
+      return active;
+    }
 
-      if (!target) {
-        state.status = "error";
-        state.message = "No editable input field was detected on this page.";
-        state.targetLabel = "";
-        return getPublicState();
+    const input = document.querySelector(EDITABLE_INPUT_SELECTOR);
+    if (input instanceof Element && isVisible(input)) {
+      return input;
+    }
+
+    const editable = document.querySelector(CONTENTEDITABLE_SELECTOR);
+    return editable instanceof Element && isVisible(editable) ? editable : null;
+  }
+
+  function detectPageType() {
+    const type = window.OwnedTypingScraper.detectPageType(getPromptAnchorElement());
+    console.log("PAGE TYPE:", type);
+    return type;
+  }
+
+  async function waitForStableText(getTextFn, timeout = 5000) {
+    let last = "";
+    let stableCount = 0;
+    const attempts = Math.max(Math.floor(timeout / 100), 1);
+
+    for (let index = 0; index < attempts; index += 1) {
+      const current = getTextFn();
+
+      if (current && current === last) {
+        stableCount += 1;
+        if (stableCount >= 3) {
+          return current;
+        }
+      } else if (current !== last) {
+        stableCount = 0;
       }
 
-      state.status = "ready";
-      state.message = `Ready to type ${requestedText.length} pasted characters.`;
-      state.targetLabel = describeElement(target.element);
-      state.lastError = "";
-      return getPublicState();
+      last = current;
+      await sleep(100);
     }
 
-    const extraction = refreshExtraction();
-    const promptTarget = target || findEditableTarget(extraction.root || null, document.activeElement);
+    return last;
+  }
 
-    if (!extraction.text) {
-      state.status = "error";
-      state.message = "No visible typing prompt was found on this page.";
-      state.targetLabel = "";
-      return getPublicState();
+  function locatePromptContainer(pageType) {
+    return window.OwnedTypingScraper.locatePromptContainer(pageType, getPromptAnchorElement());
+  }
+
+  function extractStructuredText(pageType, container) {
+    return window.OwnedTypingScraper.extractStructuredText(pageType, container);
+  }
+
+  function normalizeText(text) {
+    return window.OwnedTypingScraper.normalizeText(text);
+  }
+
+  async function waitForPromptReady(pageType) {
+    let latestContainer = null;
+    const text = await waitForStableText(() => {
+      latestContainer = locatePromptContainer(pageType);
+      if (!(latestContainer instanceof Element)) {
+        return "";
+      }
+
+      return normalizeText(extractStructuredText(pageType, latestContainer));
+    });
+
+    return {
+      container: latestContainer,
+      text
+    };
+  }
+
+  function sortByPromptDistance(candidates, promptContainer) {
+    if (!(promptContainer instanceof Element)) {
+      return candidates;
     }
 
-    if (!promptTarget) {
-      state.status = "error";
-      state.message = "No editable input field was detected on this page.";
-      state.targetLabel = "";
-      return getPublicState();
+    return candidates
+      .slice()
+      .sort((left, right) => getElementCenterDistance(left, promptContainer) - getElementCenterDistance(right, promptContainer));
+  }
+
+  function locateInputField(promptContainer = null) {
+    const active = document.activeElement;
+    if (isEditableCandidate(active)) {
+      focusEditable(active);
+      console.log("TARGET INPUT:", active);
+      return active;
     }
 
-    state.status = "ready";
-    state.message = `Ready to type ${extraction.text.length} characters using ${extraction.strategy}.`;
-    state.targetLabel = describeElement(promptTarget.element);
-    state.lastError = "";
+    const directInputs = sortByPromptDistance(
+      Array.from(document.querySelectorAll(EDITABLE_INPUT_SELECTOR)).filter(isEditableCandidate),
+      promptContainer
+    );
+    if (directInputs.length) {
+      focusEditable(directInputs[0]);
+      console.log("TARGET INPUT:", directInputs[0]);
+      return directInputs[0];
+    }
 
-    return getPublicState();
+    const editableContainers = sortByPromptDistance(
+      Array.from(document.querySelectorAll(CONTENTEDITABLE_SELECTOR)).filter(isEditableCandidate),
+      promptContainer
+    );
+    if (editableContainers.length) {
+      focusEditable(editableContainers[0]);
+      console.log("TARGET INPUT:", editableContainers[0]);
+      return editableContainers[0];
+    }
+
+    console.log("TARGET INPUT:", null);
+    return null;
+  }
+
+  function verifyProgress(details) {
+    const typedValue = String(details.typedValue || "");
+    const expectedText = String(details.expectedText || "");
+    return typedValue === expectedText.slice(0, typedValue.length);
+  }
+
+  async function prepareTypingContext(request = {}) {
+    const requestedText = getRequestedText(request.customText);
+    if (requestedText) {
+      console.log("PAGE TYPE:", "manual");
+      console.log("CONTAINER:", null);
+      console.log("EXTRACTED TEXT:", requestedText);
+
+      const input = locateInputField(null);
+      if (!input) {
+        return {
+          error: "No editable input field was detected on this page."
+        };
+      }
+
+      return {
+        text: requestedText,
+        strategy: "manual",
+        pageType: "manual",
+        root: null,
+        input
+      };
+    }
+
+    const pageType = detectPageType();
+    if (!pageType) {
+      return {
+        error: "No supported typing prompt layout was detected on this page."
+      };
+    }
+
+    const ready = await waitForPromptReady(pageType);
+    const container = ready.container || locatePromptContainer(pageType);
+    console.log("CONTAINER:", container);
+
+    if (!(container instanceof Element)) {
+      return {
+        error: "No prompt container was detected near the typing input."
+      };
+    }
+
+    const text = normalizeText(ready.text || extractStructuredText(pageType, container));
+    console.log("EXTRACTED TEXT:", text);
+
+    if (!text) {
+      return {
+        error: "No visible typing prompt was found on this page."
+      };
+    }
+
+    const input = locateInputField(container);
+    if (!input) {
+      return {
+        error: "No editable input field was detected on this page."
+      };
+    }
+
+    return {
+      text,
+      strategy: pageType,
+      pageType,
+      root: container,
+      input
+    };
+  }
+
+  function getRequestCacheKey(request = {}) {
+    const requestedText = getRequestedText(request.customText);
+    return requestedText ? `manual:${requestedText}` : "page";
+  }
+
+  function resolveTypingContext(request = {}) {
+    const key = getRequestCacheKey(request);
+    if (pendingContextPromise && pendingContextKey === key) {
+      return pendingContextPromise;
+    }
+
+    const promise = prepareTypingContext(request).finally(() => {
+      if (pendingContextPromise === promise) {
+        pendingContextPromise = null;
+        pendingContextKey = "";
+      }
+    });
+
+    pendingContextPromise = promise;
+    pendingContextKey = key;
+    return promise;
   }
 
   function getPublicState() {
@@ -219,6 +327,17 @@
       hostname: window.location.hostname,
       preview: state.extractedText.slice(0, 140)
     };
+  }
+
+  function setErrorState(message, fallbackText = "") {
+    state.status = "error";
+    state.message = message;
+    state.targetLabel = "";
+    state.lastError = message;
+    state.extractedText = fallbackText;
+    state.progress = 0;
+    state.total = fallbackText.length;
+    return getPublicState();
   }
 
   const typer = new window.OwnedTypingTyper.PageTyper({
@@ -246,7 +365,7 @@
       state.status = "stopped";
       state.progress = details.typed;
       state.total = details.total;
-      state.message = "Typing stopped.";
+      state.message = details.reason || "Typing stopped.";
     },
     onError(details) {
       state.status = "error";
@@ -255,54 +374,61 @@
     }
   });
 
-  async function startTyping(request) {
+  function typeWithTiming(context, wpm) {
+    typer.start({
+      element: context.input,
+      text: context.text,
+      wpm,
+      verifyProgress
+    });
+  }
+
+  async function updateReadyState(request = {}) {
+    const fallbackText = getRequestedText(request.customText);
+    const context = await resolveTypingContext(request);
+
+    if (context.error) {
+      return setErrorState(context.error, fallbackText);
+    }
+
+    state.status = "ready";
+    state.message = context.strategy === "manual"
+      ? `Ready to type ${context.text.length} pasted characters.`
+      : `Ready to type ${context.text.length} characters using ${context.pageType}.`;
+    state.extractedText = context.text;
+    state.strategy = context.strategy;
+    state.targetLabel = describeElement(context.input);
+    state.progress = 0;
+    state.total = context.text.length;
+    state.lastError = "";
+    return getPublicState();
+  }
+
+  async function startTyping(request = {}) {
     if (typer.getState().running) {
-      state.message = "Typing is already running.";
+      state.message = "Typing is already in progress.";
       return getPublicState();
     }
 
     const requestedWpm = Math.min(Math.max(Number(request.wpm) || 65, 10), 240);
-    const requestedText = getRequestedText(request.customText);
     state.wpm = requestedWpm;
 
-    const extraction = requestedText
-      ? {
-          text: requestedText,
-          root: null,
-          strategy: "manual"
-        }
-      : refreshExtraction();
-
-    const target = findEditableTarget(extraction.root || null, document.activeElement);
-    if (!target) {
-      state.status = "error";
-      state.message = "No editable input field was detected on this page.";
-      return getPublicState();
+    const context = await resolveTypingContext(request);
+    if (context.error) {
+      return setErrorState(context.error, getRequestedText(request.customText));
     }
 
-    if (!extraction.text) {
-      state.status = "error";
-      state.message = "No visible typing prompt was found on this page.";
-      return getPublicState();
-    }
-
-    state.extractedText = extraction.text;
-    state.strategy = extraction.strategy;
-    state.targetLabel = describeElement(target.element);
+    state.extractedText = context.text;
+    state.strategy = context.strategy;
+    state.targetLabel = describeElement(context.input);
     state.progress = 0;
-    state.total = extraction.text.length;
+    state.total = context.text.length;
     state.lastError = "";
 
     try {
-      typer.start({
-        element: target.element,
-        text: extraction.text,
-        wpm: requestedWpm
-      });
+      typeWithTiming(context, requestedWpm);
     } catch (error) {
-      state.status = "error";
-      state.message = error.message || String(error);
-      state.lastError = state.message;
+      return setErrorState(error.message || String(error), context.text);
     }
 
     return getPublicState();
@@ -336,13 +462,17 @@
       if (typer.getState().running) {
         sendResponse(getPublicState());
       } else {
-        sendResponse(updateReadyState(message || {}));
+        updateReadyState(message || {})
+          .then(sendResponse)
+          .catch((error) => sendResponse(setErrorState(error.message || String(error))));
       }
       return;
     }
 
     if (action === "START_TYPING") {
-      startTyping(message).then(sendResponse);
+      startTyping(message || {})
+        .then(sendResponse)
+        .catch((error) => sendResponse(setErrorState(error.message || String(error))));
       return;
     }
 
@@ -366,6 +496,4 @@
     handleMessage(message, sendResponse);
     return true;
   });
-
-  updateReadyState();
 })();

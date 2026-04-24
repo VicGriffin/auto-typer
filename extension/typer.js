@@ -115,6 +115,18 @@
     return typeof element.value === "string" ? element.value : "";
   }
 
+  function getTypedPortion(initialSnapshot, currentSnapshot) {
+    if (typeof currentSnapshot !== "string") {
+      return "";
+    }
+
+    if (typeof initialSnapshot === "string" && currentSnapshot.startsWith(initialSnapshot)) {
+      return currentSnapshot.slice(initialSnapshot.length);
+    }
+
+    return currentSnapshot;
+  }
+
   function calculateDelay(wpm) {
     const safeWpm = Math.max(Number(wpm) || 60, 1);
     const charactersPerMinute = safeWpm * 5;
@@ -140,7 +152,7 @@
       };
     }
 
-    start({ element, text, wpm }) {
+    start({ element, text, wpm, verifyProgress }) {
       if (this.running) {
         throw new Error("Typing is already in progress.");
       }
@@ -164,7 +176,7 @@
         });
       }
 
-      this.run(element, String(text || ""), Number(wpm) || 60)
+      this.run(element, String(text || ""), Number(wpm) || 60, verifyProgress)
         .catch((error) => {
           this.lastError = error.message || String(error);
           if (typeof this.callbacks.onError === "function") {
@@ -188,19 +200,21 @@
       return true;
     }
 
-    async run(element, text, wpm) {
+    async run(element, text, wpm, verifyProgress) {
       focusEditable(element);
 
       const delay = calculateDelay(wpm);
       const inputType = "insertText";
       const progressStep = Math.max(Math.floor(text.length / 25), 1);
+      const initialSnapshot = getEditableSnapshot(element);
 
       for (let index = 0; index < text.length; index += 1) {
         if (this.stopRequested) {
           if (typeof this.callbacks.onStop === "function") {
             this.callbacks.onStop({
               typed: index,
-              total: text.length
+              total: text.length,
+              reason: "Typing stopped."
             });
           }
           return;
@@ -221,6 +235,24 @@
         const afterValue = getEditableSnapshot(element);
         if (beforeValue === afterValue && character !== "\n") {
           throw new Error("The page rejected typed input for the detected field.");
+        }
+
+        if (typeof verifyProgress === "function") {
+          const typedValue = getTypedPortion(initialSnapshot, afterValue);
+          const verified = verifyProgress({
+            typedValue,
+            expectedText: text,
+            expectedPrefix: text.slice(0, typedValue.length),
+            actualValue: afterValue,
+            element,
+            typed: index + 1,
+            total: text.length
+          });
+
+          if (!verified) {
+            this.stopRequested = true;
+            throw new Error("Typing verification failed; input diverged from expected text.");
+          }
         }
 
         this.progress = index + 1;
