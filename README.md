@@ -1,79 +1,149 @@
 # Owned Page Typing Assistant
 
-This project is a Chrome/Edge Manifest V3 extension that:
+This repository currently contains two related implementations for automating page typing:
 
-- extracts visible typing text from the current webpage
-- finds an editable field on the same page
-- types the extracted text into that field
-- runs only on an explicit allowlist of domains you control
+- a Chrome/Edge Manifest V3 extension in `extension/`
+- a standalone desktop bot in `bot/` built with Playwright and Tkinter
 
-It does not include anti-detection logic, browser-security bypasses, or support for unapproved third-party platforms.
+Both implementations aim to:
 
-## Structure
+- detect visible typing prompt text on the current page
+- find a usable input, textarea, or contenteditable target
+- type at a configurable words-per-minute rate
+- allow the run to be stopped partway through
+
+## Project Structure
 
 ```text
-extension/
-  manifest.json
-  content.js
-  scraper.js
-  typer.js
-  popup.html
-  popup.js
+.
+|-- manifest.json
+|-- README.md
+|-- extension/
+|   |-- manifest.json
+|   |-- content.js
+|   |-- popup.html
+|   |-- popup.js
+|   |-- scraper.js
+|   `-- typer.js
+`-- bot/
+    |-- browser_controller.py
+    |-- main.py
+    |-- requirements.txt
+    |-- scraper.py
+    |-- state_manager.py
+    |-- typer.py
+    `-- ui.py
 ```
 
-## Allowed Domains
+## Browser Extension
 
-For debugging injection, both manifests currently inject the content script on `<all_urls>`.
+The extension popup lets you:
 
-Typing is still gated in `content.js` by `ALLOWED_HOSTS`.
+- inspect the active tab connection state
+- paste custom text to type
+- set a target WPM
+- start and stop typing
+- preview the detected prompt text
 
-Default entries:
+### Extension Layout
 
-- `http://localhost/*`
-- `http://127.0.0.1/*`
-- `https://mydomain.com/*`
-- `https://*.mydomain.com/*`
+There are two manifest entry points:
 
-Update `ALLOWED_HOSTS` before loading the extension if your owned domain is different.
+- `manifest.json` at the repo root, which points to files inside `extension/`
+- `extension/manifest.json`, which uses paths relative to the `extension/` folder itself
 
-## Load The Extension
+That means you can load either:
+
+- the repo root folder
+- the `extension` folder
+
+### Current Injection Behavior
+
+The current manifests use `<all_urls>` in both `host_permissions` and `content_scripts.matches`.
+
+In practice, the popup only works on normal `http` and `https` tabs, and `popup.js` will automatically reinject the content scripts if the active tab missed the initial load.
+
+If you want to lock this down before distribution, tighten the manifest matches and `host_permissions` rather than relying on the current broad defaults.
+
+### Prompt Detection
+
+The extension scraper supports three broad page layouts:
+
+- word-based prompts
+- letter-based prompts
+- paragraph or text-block prompts
+
+If the popup `Paste Text To Type` box contains text, that pasted text takes priority over scraped page content.
+
+### Load The Extension
 
 1. Open Chrome or Edge.
-2. Go to the extensions page:
-   - Chrome: `chrome://extensions`
-   - Edge: `edge://extensions`
+2. Visit `chrome://extensions` or `edge://extensions`.
 3. Turn on `Developer mode`.
 4. Click `Load unpacked`.
-5. Select either:
-   - the repo root folder, if you want Chrome to use the top-level `manifest.json`
-   - the `extension` folder, if you want Chrome to use `extension/manifest.json`
+5. Select either the repo root or the `extension` folder.
 
-Important: Chrome's `Load unpacked` dialog expects a folder, not a single file. If you do not see a `.crx` or `.js` file to click, that is normal; choose the folder and confirm.
+Chrome and Edge expect a folder here, not an individual manifest file.
 
-## Use It
+### Use The Extension
 
-1. Open an allowed page that contains:
-   - visible typing text on the page
-   - an editable input, textarea, or contenteditable field
+1. Open a normal `http` or `https` page with a prompt and editable field.
 2. Open the extension popup.
-3. Set the target WPM.
-4. Click `Start`.
-5. Click `Stop` to interrupt typing.
+3. Optionally paste custom text.
+4. Set the target WPM.
+5. Click `Start`.
+6. Click `Stop` if you want to interrupt the run.
 
-The popup shows:
+## Standalone Desktop Bot
 
-- whether the current page is allowed
-- current typing status
-- the detected target field
-- a preview of the extracted prompt
+The `bot/` directory contains a separate desktop workflow with:
+
+- Playwright browser control
+- a Tkinter GUI
+- prompt detection and input targeting similar to the extension
+- optional OS-level typing fallback through PyAutoGUI
+
+### Install Dependencies
+
+From the repository root:
+
+```powershell
+pip install -r bot/requirements.txt
+python -m playwright install chromium
+```
+
+### Run The Desktop Bot
+
+```powershell
+python bot/main.py
+```
+
+The desktop UI lets you enter:
+
+- a target URL
+- a WPM value
+- Start and Stop commands
+
+It also shows a live status line and a scrolling run log.
+
+### Optional Browser Attachment
+
+If you already have a Chromium-based browser running with remote debugging enabled, set `BOT_BROWSER_CDP_URL` before launching the bot. `bot/ui.py` passes that value into the run config so the bot can attach over CDP instead of starting a fresh browser.
 
 ## Implementation Notes
 
-- `scraper.js` extracts prompt text from visible word layouts, letter layouts, and paragraph-like blocks.
-- `typer.js` dispatches `keydown`, `input`, and `keyup` events while inserting characters into the detected field.
-- `content.js` connects extraction, target detection, and typing control for the current page.
-- `popup.js` provides the extension UI and sends start/stop commands to the active allowed tab.
+- `extension/scraper.js` and `bot/scraper.py` use similar strategies for finding prompt containers near editable fields.
+- `extension/typer.js` handles in-page typing for the browser extension.
+- `bot/typer.py` uses Playwright keyboard input first and can fall back to OS-level keystrokes when enabled.
+- `bot/browser_controller.py` launches Chrome by channel when available and falls back to Playwright Chromium if needed.
 
 ## Development
 
-There is no build step and no external runtime dependency. Edit the files in `extension` and reload the unpacked extension from the browser extensions page.
+There is no build step for the extension.
+
+For normal iteration:
+
+- edit files under `extension/` and reload the unpacked extension
+- edit files under `bot/` and rerun `python bot/main.py`
+
+This repository does not currently include automated tests.
